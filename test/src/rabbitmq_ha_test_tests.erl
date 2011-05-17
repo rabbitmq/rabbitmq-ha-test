@@ -39,19 +39,22 @@
                          {node_name(b), 5673},
                          {node_name(c), 5674}]).
 run() ->
-    ok = send_consume_test().
+    ok = send_consume_test(),
+
+    ok.
 
 send_consume_test() ->
     with_simple_cluster(
-      fun([{Master, MasterConnection, MasterChannel},
-           {Producer, ProducerConnection, ProducerChannel},
-           {Slave, SlaveConnection, SlaveChannel}]) ->
+      fun([{Master, _MasterConnection, MasterChannel},
+           {_Producer, _ProducerConnection, ProducerChannel},
+           {_Slave, _SlaveConnection, SlaveChannel}]) ->
 
               %% declare the queue on the master, mirrored to the two slaves
               #'queue.declare_ok'{queue = Queue} =
                   amqp_channel:call(MasterChannel,
                                     #'queue.declare'{auto_delete = false,
-                                                    arguments = [mirror_arg([])]}),
+                                                     arguments   =
+                                                         [mirror_arg([])]}),
 
               Msgs = 200,
 
@@ -68,7 +71,6 @@ send_consume_test() ->
               %% verify that the consumer got all msgs, or die
               wait_for_consumer_ok(ConsumerPid),
 
-              io:format("Closing down~n"),
               ok
       end).
 
@@ -107,7 +109,6 @@ consumer(TestPid, Channel, Queue, MsgsToConsume) ->
             consumer(TestPid, Channel, Queue, MsgsToConsume);
         {#'basic.deliver'{}, #amqp_msg{payload = Payload}} ->
             MsgNum = list_to_integer(binary_to_list(Payload)),
-            io:format("~p~n", [MsgNum]),
             case MsgNum of
                 MsgsToConsume ->
                     consumer(TestPid, Channel, Queue, MsgsToConsume - 1);
@@ -136,27 +137,23 @@ resubscribe(TestPid, Channel, Queue, MsgsToConsume) ->
                                             no_local = false},
                            self()),
 
-    io:format("Resubscribed~n"),
-
     ok = receive #'basic.consume_ok'{} -> ok
          after 200 -> missing_consume_ok
          end,
-
-    io:format("Resub confirmed~n"),
 
     receive
         {#'basic.deliver'{}, #amqp_msg{payload = Payload}} ->
             MsgNum = list_to_integer(binary_to_list(Payload)),
 
-            io:format("Got msg ~p after resub ~n", [MsgNum]),
-
             case MsgNum >= MsgsToConsume of
                 true ->
                     %% This is a msg we've already seen or are expecting
-                    consumer(TestPid, Channel, Queue, MsgsToConsume);
+                    consumer(TestPid, Channel, Queue, MsgNum - 1);
                 false ->
                     consumer_reply(TestPid,
-                                   {error, {unexpected_message_after_resubscribe, MsgNum}})
+                                   {error,
+                                    {unexpected_message_after_resubscribe,
+                                     MsgNum}})
             end
     end.
 
@@ -203,7 +200,6 @@ with_simple_cluster(TestFun) ->
                           || Connection <- Connections],
 
               Args = lists:zip3(Nodes, Connections, Channels),
-              io:format("~p~n", [Args]),
 
               Result = (catch TestFun(Args)),
 
