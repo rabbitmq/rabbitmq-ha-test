@@ -258,7 +258,8 @@ close_channel(Channel) ->
 %%------------------------------------------------------------------------------
 
 node_name(Name) ->
-    list_to_atom(atom_to_list(Name) ++ "@" ++ net_adm:localhost()).
+    {_, HostShort} = rabbit_misc:nodeparts(node()),
+    rabbit_misc:makenode({atom_to_list(Name), HostShort}).
 
 mirror_arg(Nodes) ->
     {<<"x-mirror">>, array,
