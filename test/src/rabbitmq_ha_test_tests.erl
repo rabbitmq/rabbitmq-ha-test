@@ -137,8 +137,6 @@ resubscribe(TestPid, Channel, Queue, NoAck, MsgsToConsume) ->
     %% past. We get the first delivery, find its msg num, if
     %% we've seen it already, we reset MsgsToConsume to it
 
-    timer:sleep(2000),  %% HACK
-
     amqp_channel:subscribe(Channel,
                            #'basic.consume'{queue    = Queue,
                                             no_local = false,
