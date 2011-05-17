@@ -35,12 +35,14 @@
 -include("rabbitmq_ha_test_cluster.hrl").
 -include_lib("amqp_client/include/amqp_client.hrl").
 
--define(SIMPLE_CLUSTER, [{node_name(a), 5672},
-                         {node_name(b), 5673},
-                         {node_name(c), 5674}]).
+-define(SIMPLE_CLUSTER, [{rabbit_misc:makenode(a), 5672},
+                         {rabbit_misc:makenode(b), 5673},
+                         {rabbit_misc:makenode(c), 5674}]).
 run() ->
     ok = send_consume_test(false),
     %% ok = send_consume_test(true), %% no_ack=true can cause message loss
+
+    ok = producer_confirms_test(),
 
     ok.
 
@@ -64,13 +66,43 @@ send_consume_test(NoAck) ->
                                             Queue, self(), NoAck, Msgs),
 
               %% send a bunch of messages from the producer
-              create_producer(ProducerChannel, Queue, Msgs),
+              ProducerPid = create_producer(ProducerChannel,
+                                            Queue, self(), false, Msgs),
 
               %% create a killer for the master
               create_killer(Master, 50),
 
               %% verify that the consumer got all msgs, or die
-              wait_for_consumer_ok(ConsumerPid),
+              ok = wait_for_consumer_ok(ConsumerPid),
+
+              ok = wait_for_producer_ok(ProducerPid),
+
+              ok
+      end).
+
+producer_confirms_test() ->
+    with_simple_cluster(
+      fun([{Master, _MasterConnection, MasterChannel},
+           {_Producer, _ProducerConnection, ProducerChannel},
+           {_Slave, _SlaveConnection, SlaveChannel}]) ->
+
+              %% declare the queue on the master, mirrored to the two slaves
+              #'queue.declare_ok'{queue = Queue} =
+                  amqp_channel:call(MasterChannel,
+                                    #'queue.declare'{auto_delete = false,
+                                                     arguments   =
+                                                         [mirror_arg([])]}),
+
+              Msgs = 2000,
+
+              %% send a bunch of messages from the producer
+              ProducerPid = create_producer(ProducerChannel,
+                                            Queue, self(), true, Msgs),
+
+              %% create a killer for the master
+              create_killer(Master, 50),
+
+              ok = wait_for_producer_ok(ProducerPid),
 
               ok
       end).
@@ -180,22 +212,97 @@ consumer_reply(TestPid, Reply) ->
 %% Producer
 %%------------------------------------------------------------------------------
 
-create_producer(Channel, Queue, MsgsToSend) ->
-    spawn(?MODULE, producer, [Channel, Queue, MsgsToSend]).
+wait_for_producer_ok(ProducerPid) ->
+    ok = receive
+             {ProducerPid, ok}    -> ok;
+             {ProducerPid, Other} -> Other
+         after
+             60000 ->
+                 {error, lost_contact_with_producer}
+         end.
 
-producer(_Channel, _Queue, 0) ->
-    ok;
-producer(Channel, Queue, MsgsToSend) ->
+create_producer(Channel, Queue, TestPid, Confirm, MsgsToSend) ->
+    spawn(?MODULE, start_producer, [Channel, Queue, TestPid,
+                                    Confirm, MsgsToSend]).
+
+start_producer(Channel, Queue, TestPid, Confirm, MsgsToSend) ->
+    ConfirmState =
+        case Confirm of
+            true ->
+                amqp_channel:register_confirm_handler(Channel, self()),
+                #'confirm.select_ok'{} =
+                    amqp_channel:call(Channel, #'confirm.select'{}),
+                gb_trees:empty();
+            false ->
+                none
+    end,
+    producer(Channel, Queue, TestPid, ConfirmState, MsgsToSend).
+
+producer(_Channel, _Queue, TestPid, ConfirmState, 0) ->
+    ConfirmState1 = drain_confirms(ConfirmState),
+
+    case ConfirmState1 of
+        none -> TestPid ! {self(), ok};
+        ok   -> TestPid ! {self(), ok};
+        _    -> TestPid ! {self(), {error, {missing_confirms, ConfirmState1}}}
+    end;
+producer(Channel, Queue, TestPid, ConfirmState, MsgsToSend) ->
     Method = #'basic.publish'{exchange    = <<"">>,
                               routing_key = Queue,
                               mandatory   = false,
                               immediate   = false},
 
+    ConfirmState1 = maybe_record_confirm(ConfirmState, Channel, MsgsToSend),
+
     amqp_channel:call(Channel, Method,
                       #amqp_msg{payload = list_to_binary(
                                             integer_to_list(MsgsToSend))}),
 
-    producer(Channel, Queue, MsgsToSend - 1).
+    producer(Channel, Queue, TestPid, ConfirmState1, MsgsToSend - 1).
+
+maybe_record_confirm(none, _, _) ->
+    none;
+maybe_record_confirm(ConfirmState, Channel, MsgsToSend) ->
+    SeqNo = amqp_channel:next_publish_seqno(Channel),
+    gb_trees:insert(SeqNo, MsgsToSend, ConfirmState).
+
+drain_confirms(none) ->
+    none;
+drain_confirms(ConfirmState) ->
+    case gb_trees:is_empty(ConfirmState) of
+        true ->
+            ok;
+        false ->
+            receive
+                #'basic.ack'{delivery_tag = DeliveryTag,
+                             multiple     = IsMulti} ->
+                    ConfirmState1 =
+                        case IsMulti of
+                            false ->
+                                gb_trees:delete(DeliveryTag, ConfirmState);
+                            true ->
+                                multi_confirm(DeliveryTag, ConfirmState)
+                        end,
+                    drain_confirms(ConfirmState1)
+            after
+                1000 ->
+                    ConfirmState
+            end
+    end.
+
+multi_confirm(DeliveryTag, ConfirmState) ->
+    case gb_trees:is_empty(ConfirmState) of
+        true ->
+            ConfirmState;
+        false ->
+            {Key, _, ConfirmState1} = gb_trees:take_smallest(ConfirmState),
+            case Key =< DeliveryTag of
+                true ->
+                    multi_confirm(DeliveryTag, ConfirmState1);
+                false ->
+                    ConfirmState
+            end
+    end.
 
 %%------------------------------------------------------------------------------
 %% Utility
@@ -256,10 +363,6 @@ close_channel(Channel) ->
 %%------------------------------------------------------------------------------
 %% General Utils
 %%------------------------------------------------------------------------------
-
-node_name(Name) ->
-    {_, HostShort} = rabbit_misc:nodeparts(node()),
-    rabbit_misc:makenode({atom_to_list(Name), HostShort}).
 
 mirror_arg(Nodes) ->
     {<<"x-mirror">>, array,
