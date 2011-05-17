@@ -40,7 +40,7 @@
                          {node_name(c), 5674}]).
 run() ->
     ok = send_consume_test(false),
-    ok = send_consume_test(true),
+    %% ok = send_consume_test(true), %% no_ack=true can cause message loss
 
     ok.
 
