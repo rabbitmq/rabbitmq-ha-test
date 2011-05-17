@@ -32,7 +32,6 @@
 
 -export([start/1, stop/1]).
 -export([kill_node/1]).
--export([list_queues/1, stop_node/1]).
 
 -include("rabbitmq_ha_test_cluster.hrl").
 
@@ -60,9 +59,6 @@ stop(#cluster{nodes = Nodes}) ->
 
 kill_node(#node{pid = Pid}) ->
     os:cmd("kill -9 " ++ integer_to_list(Pid)).
-
-list_queues(#node{name = Name}) ->
-    io:format("Node: ~p -- Queues: ~s~n", [Name, rabbitmqctl(Name, "list_queues name mirror_pids")]).
 
 %%------------------------------------------------------------------------------
 %% Node Interaction
@@ -123,7 +119,9 @@ find_os_pid(Node) ->
     proplists:get_value(pid, Term).
 
 wait_for_node_start(NodeName) ->
-    wait_for_node_state(NodeName, pong, ?PING_MAX_COUNT, node_not_started).
+    rabbitmqctl(NodeName, "wait"),
+    {ok, NodeName}.
+
 wait_for_node_stop(NodeName) ->
     wait_for_node_state(NodeName, pang, ?PING_MAX_COUNT, node_not_stopped).
 
