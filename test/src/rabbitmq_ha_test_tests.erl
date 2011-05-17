@@ -39,10 +39,12 @@
                          {rabbit_misc:makenode(b), 5673},
                          {rabbit_misc:makenode(c), 5674}]).
 run() ->
-    ok = send_consume_test(false),
+%%    ok = send_consume_test(false),
     %% ok = send_consume_test(true), %% no_ack=true can cause message loss
 
-    ok = producer_confirms_test(),
+%%    ok = producer_confirms_test(),
+
+    ok = multi_kill_test(),
 
     ok.
 
@@ -80,11 +82,57 @@ send_consume_test(NoAck) ->
               ok
       end).
 
+multi_kill_test() ->
+    with_cluster_connected(
+      ?SIMPLE_CLUSTER ++
+          [{rabbit_misc:makenode(d), 5675},
+           {rabbit_misc:makenode(e), 5676},
+           {rabbit_misc:makenode(f), 5677}],
+      fun([{Master, _MasterConnection, MasterChannel},
+           {Slave1, _Slave1Connection, _Slave1Channel},
+           {Slave2, _Slave2Connection, _Slave2Channel},
+           {Slave3, _Slave3Connection, _Slave3Channel},
+           {Slave4, _Slave4Connection, Slave4Channel},
+           {_Producer, _ProducerConnection, ProducerChannel}
+           ]) ->
+
+              %% declare the queue on the master, mirrored to the two slaves
+              #'queue.declare_ok'{queue = Queue} =
+                  amqp_channel:call(MasterChannel,
+                                    #'queue.declare'{auto_delete = false,
+                                                     arguments   =
+                                                         [mirror_arg([])]}),
+
+              Msgs = 1000,
+
+              %% start up a consumer
+              ConsumerPid = create_consumer(Slave4Channel,
+                                            Queue, self(), false, Msgs),
+
+              %% send a bunch of messages from the producer
+              ProducerPid = create_producer(ProducerChannel,
+                                            Queue, self(), false, Msgs),
+
+              %% create a killer for the master and the first 3 slaves
+              [create_killer(Node, Time) || {Node, Time} <-
+                                                [{Master, 50},
+                                                 {Slave1, 100},
+                                                 {Slave2, 200}
+                                                 ]],
+
+              %% verify that the consumer got all msgs, or die
+              ok = wait_for_consumer_ok(ConsumerPid),
+
+              ok = wait_for_producer_ok(ProducerPid),
+
+              ok
+      end).
+
 producer_confirms_test() ->
     with_simple_cluster(
       fun([{Master, _MasterConnection, MasterChannel},
            {_Producer, _ProducerConnection, ProducerChannel},
-           {_Slave, _SlaveConnection, SlaveChannel}]) ->
+           {_Slave, _SlaveConnection, _SlaveChannel}]) ->
 
               %% declare the queue on the master, mirrored to the two slaves
               #'queue.declare_ok'{queue = Queue} =
@@ -156,9 +204,10 @@ consumer(TestPid, Channel, Queue, NoAck, MsgsToConsume) ->
                                    {error, {unexpected_message, MsgNum}})
             end;
         #'basic.cancel'{} ->
+            io:format("Cancelled~n"),
             resubscribe(TestPid, Channel, Queue, NoAck, MsgsToConsume)
     after
-        100 ->
+        2000 ->
             consumer_reply(TestPid,
                            {error, {expecting_more_messages, MsgsToConsume}})
     end.
@@ -169,11 +218,15 @@ resubscribe(TestPid, Channel, Queue, NoAck, MsgsToConsume) ->
     %% past. We get the first delivery, find its msg num, if
     %% we've seen it already, we reset MsgsToConsume to it
 
+    io:format("Sending resubscribe~n"),
+
     amqp_channel:subscribe(Channel,
                            #'basic.consume'{queue    = Queue,
                                             no_local = false,
                                             no_ack   = NoAck},
                            self()),
+
+    io:format("Sent resubscribe~n"),
 
     ok = receive #'basic.consume_ok'{} -> ok
          after 200 -> missing_consume_ok
@@ -314,9 +367,9 @@ with_cluster(ClusterSpec, TestFun) ->
     rabbitmq_ha_test_cluster:stop(Cluster),
     Result.
 
-with_simple_cluster(TestFun) ->
+with_cluster_connected(ClusterSpec, TestFun) ->
     with_cluster(
-      ?SIMPLE_CLUSTER,
+      ClusterSpec,
       fun(#cluster{nodes = Nodes}) ->
               Connections = [open_connection(Node) || Node <- Nodes],
               Channels = [open_channel(Connection)
@@ -334,6 +387,8 @@ with_simple_cluster(TestFun) ->
               Result
       end).
 
+with_simple_cluster(TestFun) ->
+    with_cluster_connected(?SIMPLE_CLUSTER, TestFun).
 
 %%------------------------------------------------------------------------------
 %% Connection/Channel Utils
