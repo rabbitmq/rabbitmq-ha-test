@@ -39,11 +39,12 @@
                          {node_name(b), 5673},
                          {node_name(c), 5674}]).
 run() ->
-    ok = send_consume_test(),
+    ok = send_consume_test(false),
+    ok = send_consume_test(true),
 
     ok.
 
-send_consume_test() ->
+send_consume_test(NoAck) ->
     with_simple_cluster(
       fun([{Master, _MasterConnection, MasterChannel},
            {_Producer, _ProducerConnection, ProducerChannel},
@@ -60,7 +61,7 @@ send_consume_test() ->
 
               %% start up a consumer
               ConsumerPid = create_consumer(SlaveChannel,
-                                            Queue, self(), Msgs),
+                                            Queue, self(), NoAck, Msgs),
 
               %% send a bunch of messages from the producer
               create_producer(ProducerChannel, Queue, Msgs),
@@ -93,38 +94,44 @@ wait_for_consumer_ok(ConsumerPid) ->
                  {error, lost_contact_with_consumer}
          end.
 
-create_consumer(Channel, Queue, TestPid, ExpectingMsgs) ->
-    ConsumerPid = spawn(?MODULE, consumer, [TestPid, Channel,
-                                            Queue, ExpectingMsgs]),
+create_consumer(Channel, Queue, TestPid, NoAck, ExpectingMsgs) ->
+    ConsumerPid = spawn(?MODULE, consumer, [TestPid, Channel, Queue,
+                                            NoAck, ExpectingMsgs]),
     amqp_channel:subscribe(Channel,
-                           #'basic.consume'{queue = Queue, no_local = false},
+                           #'basic.consume'{queue    = Queue,
+                                            no_local = false,
+                                            no_ack   = NoAck},
                            ConsumerPid),
     ConsumerPid.
 
-consumer(TestPid, _Channel, _Queue, 0) ->
+consumer(TestPid, _Channel, _Queue, _NoAck, 0) ->
     consumer_reply(TestPid, ok);
-consumer(TestPid, Channel, Queue, MsgsToConsume) ->
+consumer(TestPid, Channel, Queue, NoAck, MsgsToConsume) ->
     receive
         #'basic.consume_ok'{} ->
-            consumer(TestPid, Channel, Queue, MsgsToConsume);
-        {#'basic.deliver'{}, #amqp_msg{payload = Payload}} ->
+            consumer(TestPid, Channel, Queue, NoAck, MsgsToConsume);
+        {Delivery = #'basic.deliver'{}, #amqp_msg{payload = Payload}} ->
             MsgNum = list_to_integer(binary_to_list(Payload)),
+            io:format("Msg:~p~n", [MsgNum]),
+
+            maybe_ack(Delivery, Channel, NoAck),
+
             case MsgNum of
                 MsgsToConsume ->
-                    consumer(TestPid, Channel, Queue, MsgsToConsume - 1);
+                    consumer(TestPid, Channel, Queue, NoAck, MsgsToConsume - 1);
                 _ ->
                     consumer_reply(TestPid,
                                    {error, {unexpected_message, MsgNum}})
             end;
         #'basic.cancel'{} ->
-            resubscribe(TestPid, Channel, Queue, MsgsToConsume)
+            resubscribe(TestPid, Channel, Queue, NoAck, MsgsToConsume)
     after
         100 ->
             consumer_reply(TestPid,
                            {error, {expecting_more_messages, MsgsToConsume}})
     end.
 
-resubscribe(TestPid, Channel, Queue, MsgsToConsume) ->
+resubscribe(TestPid, Channel, Queue, NoAck, MsgsToConsume) ->
     %% after resubscribe, we get another basic.consume_ok,
     %% then we'll start seeing messages from some point in the
     %% past. We get the first delivery, find its msg num, if
@@ -134,7 +141,8 @@ resubscribe(TestPid, Channel, Queue, MsgsToConsume) ->
 
     amqp_channel:subscribe(Channel,
                            #'basic.consume'{queue    = Queue,
-                                            no_local = false},
+                                            no_local = false,
+                                            no_ack   = NoAck},
                            self()),
 
     ok = receive #'basic.consume_ok'{} -> ok
@@ -145,10 +153,12 @@ resubscribe(TestPid, Channel, Queue, MsgsToConsume) ->
         {#'basic.deliver'{}, #amqp_msg{payload = Payload}} ->
             MsgNum = list_to_integer(binary_to_list(Payload)),
 
+            io:format("Resubscribed at: ~p~n", [MsgNum]),
+
             case MsgNum >= MsgsToConsume of
                 true ->
                     %% This is a msg we've already seen or are expecting
-                    consumer(TestPid, Channel, Queue, MsgNum - 1);
+                    consumer(TestPid, Channel, Queue, NoAck, MsgNum - 1);
                 false ->
                     consumer_reply(TestPid,
                                    {error,
@@ -156,6 +166,14 @@ resubscribe(TestPid, Channel, Queue, MsgsToConsume) ->
                                      MsgNum}})
             end
     end.
+
+maybe_ack(_Delivery, _Channel, true) ->
+    ok;
+maybe_ack(#'basic.deliver'{delivery_tag = DeliveryTag}, Channel, false) ->
+    io:format("Sending ack~n"),
+    amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DeliveryTag}),
+    ok.
+
 
 consumer_reply(TestPid, Reply) ->
     TestPid ! {self(), Reply}.
