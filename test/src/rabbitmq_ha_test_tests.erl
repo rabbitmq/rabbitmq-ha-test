@@ -244,28 +244,10 @@ resubscribe(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume) ->
 
     consumer(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume).
 
-    %% receive
-    %%     {#'basic.deliver'{}, #amqp_msg{payload = Payload}} ->
-    %%         MsgNum = list_to_integer(binary_to_list(Payload)),
-
-    %%         io:format("Resubscribed at: ~p~n", [MsgNum]),
-
-    %%         case MsgNum >= MsgsToConsume of
-    %%             true ->
-    %%                 %% This is a msg we've already seen or are expecting
-    %%                 consumer(TestPid, Channel, Queue, NoAck, MsgNum - 1);
-    %%             false ->
-    %%                 consumer_reply(TestPid,
-    %%                                {error,
-    %%                                 {unexpected_message_after_resubscribe,
-    %%                                  MsgNum}})
-    %%         end
-    %% end.
-
 maybe_ack(_Delivery, _Channel, true) ->
     ok;
 maybe_ack(#'basic.deliver'{delivery_tag = DeliveryTag}, Channel, false) ->
-    amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DeliveryTag}),
+hg    amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DeliveryTag}),
     ok.
 
 
