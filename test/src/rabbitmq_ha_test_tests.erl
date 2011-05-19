@@ -39,10 +39,10 @@
                          {rabbit_misc:makenode(b), 5673},
                          {rabbit_misc:makenode(c), 5674}]).
 run() ->
-%%    ok = send_consume_test(false),
+    ok = send_consume_test(false),
     %% ok = send_consume_test(true), %% no_ack=true can cause message loss
 
-%%    ok = producer_confirms_test(),
+    ok = producer_confirms_test(),
 
     ok = multi_kill_test(),
 
@@ -103,7 +103,7 @@ multi_kill_test() ->
                                                      arguments   =
                                                          [mirror_arg([])]}),
 
-              Msgs = 1000,
+              Msgs = 5000,
 
               %% start up a consumer
               ConsumerPid = create_consumer(Slave4Channel,
@@ -117,7 +117,8 @@ multi_kill_test() ->
               [create_killer(Node, Time) || {Node, Time} <-
                                                 [{Master, 50},
                                                  {Slave1, 100},
-                                                 {Slave2, 200}
+                                                 {Slave2, 200},
+                                                 {Slave3, 300}
                                                  ]],
 
               %% verify that the consumer got all msgs, or die
@@ -175,8 +176,8 @@ wait_for_consumer_ok(ConsumerPid) ->
          end.
 
 create_consumer(Channel, Queue, TestPid, NoAck, ExpectingMsgs) ->
-    ConsumerPid = spawn(?MODULE, consumer, [TestPid, Channel, Queue,
-                                            NoAck, ExpectingMsgs]),
+    ConsumerPid = spawn(?MODULE, consumer, [TestPid, Channel, Queue, NoAck,
+                                            ExpectingMsgs + 1, ExpectingMsgs]),
     amqp_channel:subscribe(Channel,
                            #'basic.consume'{queue    = Queue,
                                             no_local = false,
@@ -184,40 +185,49 @@ create_consumer(Channel, Queue, TestPid, NoAck, ExpectingMsgs) ->
                            ConsumerPid),
     ConsumerPid.
 
-consumer(TestPid, _Channel, _Queue, _NoAck, 0) ->
+consumer(TestPid, _Channel, _Queue, _NoAck, _LowestSeen, 0) ->
     consumer_reply(TestPid, ok);
-consumer(TestPid, Channel, Queue, NoAck, MsgsToConsume) ->
+consumer(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume) ->
     receive
         #'basic.consume_ok'{} ->
-            consumer(TestPid, Channel, Queue, NoAck, MsgsToConsume);
+            consumer(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume);
         {Delivery = #'basic.deliver'{}, #amqp_msg{payload = Payload}} ->
             MsgNum = list_to_integer(binary_to_list(Payload)),
-            io:format("Msg:~p~n", [MsgNum]),
 
             maybe_ack(Delivery, Channel, NoAck),
 
-            case MsgNum of
-                MsgsToConsume ->
-                    consumer(TestPid, Channel, Queue, NoAck, MsgsToConsume - 1);
-                _ ->
+            case MsgNum >= LowestSeen - 1 of
+                true ->
+                    %% we can receive any message we've already seen
+                    %% and, because of the possibility of multiple
+                    %% requeuings, we might see these messages in any
+                    %% order. If we are seeing a message again, we
+                    %% don't decrement the MsgsToConsume counter.
+                    {LowestSeen1, MsgsToConsume1}
+                        = case MsgNum < LowestSeen of
+                              true  -> {MsgNum, MsgsToConsume - 1};
+                              false -> {LowestSeen, MsgsToConsume}
+                          end,
+                    consumer(TestPid, Channel, Queue,
+                             NoAck, LowestSeen1, MsgsToConsume1);
+                false ->
+                    %% We received a message we haven't seen before,
+                    %% but it is not the next message in the expected
+                    %% sequence.
                     consumer_reply(TestPid,
                                    {error, {unexpected_message, MsgNum}})
             end;
         #'basic.cancel'{} ->
             io:format("Cancelled~n"),
-            resubscribe(TestPid, Channel, Queue, NoAck, MsgsToConsume)
+            resubscribe(TestPid, Channel, Queue, NoAck,
+                        LowestSeen, MsgsToConsume)
     after
         2000 ->
             consumer_reply(TestPid,
                            {error, {expecting_more_messages, MsgsToConsume}})
     end.
 
-resubscribe(TestPid, Channel, Queue, NoAck, MsgsToConsume) ->
-    %% after resubscribe, we get another basic.consume_ok,
-    %% then we'll start seeing messages from some point in the
-    %% past. We get the first delivery, find its msg num, if
-    %% we've seen it already, we reset MsgsToConsume to it
-
+resubscribe(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume) ->
     io:format("Sending resubscribe~n"),
 
     amqp_channel:subscribe(Channel,
@@ -232,28 +242,29 @@ resubscribe(TestPid, Channel, Queue, NoAck, MsgsToConsume) ->
          after 200 -> missing_consume_ok
          end,
 
-    receive
-        {#'basic.deliver'{}, #amqp_msg{payload = Payload}} ->
-            MsgNum = list_to_integer(binary_to_list(Payload)),
+    consumer(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume).
 
-            io:format("Resubscribed at: ~p~n", [MsgNum]),
+    %% receive
+    %%     {#'basic.deliver'{}, #amqp_msg{payload = Payload}} ->
+    %%         MsgNum = list_to_integer(binary_to_list(Payload)),
 
-            case MsgNum >= MsgsToConsume of
-                true ->
-                    %% This is a msg we've already seen or are expecting
-                    consumer(TestPid, Channel, Queue, NoAck, MsgNum - 1);
-                false ->
-                    consumer_reply(TestPid,
-                                   {error,
-                                    {unexpected_message_after_resubscribe,
-                                     MsgNum}})
-            end
-    end.
+    %%         io:format("Resubscribed at: ~p~n", [MsgNum]),
+
+    %%         case MsgNum >= MsgsToConsume of
+    %%             true ->
+    %%                 %% This is a msg we've already seen or are expecting
+    %%                 consumer(TestPid, Channel, Queue, NoAck, MsgNum - 1);
+    %%             false ->
+    %%                 consumer_reply(TestPid,
+    %%                                {error,
+    %%                                 {unexpected_message_after_resubscribe,
+    %%                                  MsgNum}})
+    %%         end
+    %% end.
 
 maybe_ack(_Delivery, _Channel, true) ->
     ok;
 maybe_ack(#'basic.deliver'{delivery_tag = DeliveryTag}, Channel, false) ->
-    io:format("Sending ack~n"),
     amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DeliveryTag}),
     ok.
 
