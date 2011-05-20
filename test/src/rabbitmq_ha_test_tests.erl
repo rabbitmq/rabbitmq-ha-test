@@ -247,7 +247,7 @@ resubscribe(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume) ->
 maybe_ack(_Delivery, _Channel, true) ->
     ok;
 maybe_ack(#'basic.deliver'{delivery_tag = DeliveryTag}, Channel, false) ->
-hg    amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DeliveryTag}),
+    amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DeliveryTag}),
     ok.
 
 
