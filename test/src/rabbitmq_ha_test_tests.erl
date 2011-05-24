@@ -197,22 +197,20 @@ consumer(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume) ->
 
             maybe_ack(Delivery, Channel, NoAck),
 
-            case MsgNum >= LowestSeen - 1 of
-                true ->
-                    %% we can receive any message we've already seen
-                    %% and, because of the possibility of multiple
-                    %% requeuings, we might see these messages in any
-                    %% order. If we are seeing a message again, we
-                    %% don't decrement the MsgsToConsume counter.
-                    {LowestSeen1, MsgsToConsume1}
-                        = case MsgNum < LowestSeen of
-                              true  -> {MsgNum, MsgsToConsume - 1};
-                              false -> true = Redelivered, %% ASSERTION
-                                       {LowestSeen, MsgsToConsume}
-                          end,
+            %% we can receive any message we've already seen and,
+            %% because of the possibility of multiple requeuings, we
+            %% might see these messages in any order. If we are seeing
+            %% a message again, we don't decrement the MsgsToConsume
+            %% counter.
+            if
+                MsgNum + 1 == LowestSeen ->
                     consumer(TestPid, Channel, Queue,
-                             NoAck, LowestSeen1, MsgsToConsume1);
-                false ->
+                             NoAck, MsgNum, MsgsToConsume - 1);
+                MsgNum >= LowestSeen ->
+                    true = Redelivered, %% ASSERTION
+                    consumer(TestPid, Channel, Queue,
+                             NoAck, LowestSeen, MsgsToConsume);
+                true ->
                     %% We received a message we haven't seen before,
                     %% but it is not the next message in the expected
                     %% sequence.
