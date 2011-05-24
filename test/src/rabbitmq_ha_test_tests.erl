@@ -191,7 +191,8 @@ consumer(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume) ->
     receive
         #'basic.consume_ok'{} ->
             consumer(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume);
-        {Delivery = #'basic.deliver'{}, #amqp_msg{payload = Payload}} ->
+        {Delivery = #'basic.deliver'{ redelivered = Redelivered },
+         #amqp_msg{payload = Payload}} ->
             MsgNum = list_to_integer(binary_to_list(Payload)),
 
             maybe_ack(Delivery, Channel, NoAck),
@@ -206,7 +207,8 @@ consumer(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume) ->
                     {LowestSeen1, MsgsToConsume1}
                         = case MsgNum < LowestSeen of
                               true  -> {MsgNum, MsgsToConsume - 1};
-                              false -> {LowestSeen, MsgsToConsume}
+                              false -> true = Redelivered, %% ASSERTION
+                                       {LowestSeen, MsgsToConsume}
                           end,
                     consumer(TestPid, Channel, Queue,
                              NoAck, LowestSeen1, MsgsToConsume1);
