@@ -86,7 +86,7 @@ stop_node(#node{name = Name}) ->
     ok.
 
 %%------------------------------------------------------------------------------
-%% rabbitmqctl interaction
+%% Commands and rabbitmqctl
 %%------------------------------------------------------------------------------
 
 start_command(Name, Port) ->
@@ -94,19 +94,16 @@ start_command(Name, Port) ->
         "' RABBITMQ_NODE_PORT=" ++ integer_to_list(Port) ++
         " -C " ++ ?RABBITMQ_SERVER_DIR ++ " cleandb run\"".
 
-rabbitmqctl(Node, Command) ->
-    rabbitmqctl(Node, Command, false).
-rabbitmqctl(Node, Command, Quiet) ->
-    rabbitmqctl(Node, Command, Quiet, []).
-rabbitmqctl(Node, Command, Quiet, Args) ->
-    QuietFlag = case Quiet of
-                    true -> "-q";
-                    false -> ""
-                end,
+rabbitmqctl(Name, Command) ->
+    rabbitmq_ha_test_util:rabbitmqctl(?RABBITMQ_SERVER_DIR, Name, Command).
 
-    os:cmd(?RABBITMQ_SERVER_DIR ++ "/scripts/rabbitmqctl " ++ QuietFlag
-           ++ " -n " ++ atom_to_list(Node) ++ " " ++ Command ++ " "
-           ++ lists:flatten([Arg ++ " " || Arg <- Args])).
+rabbitmqctl(Name, Command, Quiet) ->
+    rabbitmq_ha_test_util:rabbitmqctl(?RABBITMQ_SERVER_DIR, Name,
+                                      Command, Quiet).
+
+rabbitmqctl(Name, Command, Quiet, Args) ->
+    rabbitmq_ha_test_util:rabbitmqctl(?RABBITMQ_SERVER_DIR, Name,
+                                      Command, Quiet, Args).
 
 %%------------------------------------------------------------------------------
 %% Util
