@@ -301,8 +301,6 @@ producer(_Channel, _Queue, TestPid, ConfirmState, 0) ->
     io:format("Done~n"),
     ConfirmState1 = drain_confirms(ConfirmState),
 
-    io:format("~p~n", [gb_trees:keys(ConfirmState1)]),
-
     case ConfirmState1 of
         none -> TestPid ! {self(), ok};
         ok   -> TestPid ! {self(), ok};
