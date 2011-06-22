@@ -90,9 +90,15 @@ stop_node(#node{name = Name}) ->
 %%------------------------------------------------------------------------------
 
 start_command(Name, Port) ->
-    "xterm -e \"make RABBITMQ_NODENAME='" ++ atom_to_list(Name) ++
+    Headless = true,
+    {Prefix, Suffix} = case Headless of
+                           true -> {"", ""};
+                           false -> {"xterm -e \"", "\""}
+                       end,
+
+    Prefix ++ "make RABBITMQ_NODENAME='" ++ atom_to_list(Name) ++
         "' RABBITMQ_NODE_PORT=" ++ integer_to_list(Port) ++
-        " -C " ++ ?RABBITMQ_SERVER_DIR ++ " cleandb run\"".
+        " -C " ++ ?RABBITMQ_SERVER_DIR ++ " cleandb run" ++ Suffix.
 
 rabbitmqctl(Name, Command) ->
     rabbitmq_ha_test_util:rabbitmqctl(?RABBITMQ_SERVER_DIR, Name, Command).

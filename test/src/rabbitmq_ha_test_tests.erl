@@ -43,18 +43,15 @@
 run() ->
     [ok = apply(Fun, Args) ||
         {Fun, Args} <-
-            [{fun send_consume_test/1, [false]},
-             {fun producer_confirms_test/0, []},
-             {fun dynamic_slave_primed_test/0, []},
-             {fun multi_kill_test/0, []}]],
+            [%%{fun send_consume_test/1, [false]},
+             {fun producer_confirms_test/0, []}
+             %%{fun multi_kill_test/0, []}
+            ]],
 
     %% Some tests will fail....
 
     %% no_ack=true can cause message loss
     %% ok = send_consume_test(true),
-
-    %% cannot safely add dynamic slaves midway through message flow
-    %% ok = dynamic_slave_test(),
 
     ok.
 
@@ -70,7 +67,7 @@ send_consume_test(NoAck) ->
                   amqp_channel:call(MasterChannel,
                                     #'queue.declare'{auto_delete = false,
                                                      arguments   =
-                                                         [mirror_arg([])]}),
+                                                         mirror_args([])}),
 
               Msgs = 200,
 
@@ -89,6 +86,8 @@ send_consume_test(NoAck) ->
               ok = wait_for_consumer_ok(ConsumerPid),
 
               ok = wait_for_producer_ok(ProducerPid),
+
+              io:format("Waited~n"),
 
               ok
       end).
@@ -113,7 +112,7 @@ multi_kill_test() ->
                   amqp_channel:call(MasterChannel,
                                     #'queue.declare'{auto_delete = false,
                                                      arguments   =
-                                                         [mirror_arg([])]}),
+                                                         mirror_args([])}),
 
               Msgs = 5000,
 
@@ -141,123 +140,6 @@ multi_kill_test() ->
               ok
       end).
 
-dynamic_slave_primed_test() ->
-    with_cluster_connected(
-      ?SIMPLE_CLUSTER ++
-          [{rabbit_misc:makenode(d), 5675},
-           {rabbit_misc:makenode(e), 5676},
-           {rabbit_misc:makenode(f), 5677}],
-      fun(_Cluster,
-          [{Master, _MasterConnection, MasterChannel},
-           {Slave1, _Slave1Connection, _Slave1Channel},
-           {Slave2, _Slave2Connection, _Slave2Channel},
-           {Slave3, _Slave3Connection, _Slave3Channel},
-           {_Producer, _ProducerConnection, ProducerChannel},
-           {_Consumer, _ConsumerConnection, ConsumerChannel}
-           ]) ->
-
-              %% declare the queue on the master, mirrored to the two slaves
-              #'queue.declare_ok'{queue = Queue} =
-                  amqp_channel:call(MasterChannel,
-                                    #'queue.declare'{
-                                      auto_delete = false,
-                                      arguments   = [mirror_arg([Master,
-                                                                 Slave1,
-                                                                 Slave2])]}),
-
-              %% add Slave3 dynamically
-              #node{name = Slave2Name} = Slave2,
-              #node{name = Slave3Name} = Slave3,
-
-              rabbitmq_ha_test_util:rabbitmqctl(?RABBITMQ_SERVER_DIR,
-                                                Slave2Name,
-                                                "add_queue_mirror", false,
-                                                [binary_to_list(Queue),
-                                                 atom_to_list(Slave3Name)]),
-
-              Msgs = 20000,
-
-              %% start up a consumer
-              ConsumerPid = create_consumer(ConsumerChannel,
-                                            Queue, self(), false, Msgs),
-
-              %% send a bunch of messages from the producer
-              ProducerPid = create_producer(ProducerChannel,
-                                            Queue, self(), false, Msgs),
-
-              %% create a killer for the master and the first 3 slaves
-              [create_killer(Node, Time) || {Node, Time} <-
-                                                [{Master, 50},
-                                                 {Slave1, 100},
-                                                 {Slave2, 200}
-                                                 ]],
-
-              %% wait for the producer and consumer
-              ok = wait_for_producer_ok(ProducerPid),
-              ok = wait_for_consumer_ok(ConsumerPid),
-
-              ok
-      end).
-
-dynamic_slave_test() ->
-    with_cluster_connected(
-      ?SIMPLE_CLUSTER ++
-          [{rabbit_misc:makenode(d), 5675},
-           {rabbit_misc:makenode(e), 5676},
-           {rabbit_misc:makenode(f), 5677}],
-      fun(_Cluster,
-          [{Master, _MasterConnection, MasterChannel},
-           {Slave1, _Slave1Connection, _Slave1Channel},
-           {Slave2, _Slave2Connection, _Slave2Channel},
-           {Slave3, _Slave3Connection, _Slave3Channel},
-           {_Producer, _ProducerConnection, ProducerChannel},
-           {_Consumer, _ConsumerConnection, ConsumerChannel}
-           ]) ->
-
-              %% declare the queue on the master, mirrored to the two slaves
-              #'queue.declare_ok'{queue = Queue} =
-                  amqp_channel:call(MasterChannel,
-                                    #'queue.declare'{
-                                      auto_delete = false,
-                                      arguments   = [mirror_arg([Master,
-                                                                 Slave1,
-                                                                 Slave2])]}),
-
-              Msgs = 50000,
-
-              %% start up a consumer
-              ConsumerPid = create_consumer(ConsumerChannel,
-                                            Queue, self(), false, Msgs),
-
-              %% send a bunch of messages from the producer
-              ProducerPid = create_producer(ProducerChannel,
-                                            Queue, self(), false, Msgs),
-
-              %% create a killer for the master and the first 3 slaves
-              [create_killer(Node, Time) || {Node, Time} <-
-                                                [{Master, 50},
-                                                 {Slave1, 100},
-                                                 {Slave2, 1000}
-                                                 ]],
-
-              %% start new slave after a short pause, should be
-              %% inbetween death of Slave1 and Slave2
-              #node{name = Slave2Name} = Slave2,
-              #node{name = Slave3Name} = Slave3,
-
-              timer:sleep(100),
-              rabbitmq_ha_test_util:rabbitmqctl(?RABBITMQ_SERVER_DIR,
-                                                Slave2Name,
-                                                "add_queue_mirror", false,
-                                                [binary_to_list(Queue),
-                                                 atom_to_list(Slave3Name)]),
-
-              %% wait for the producer and consumer
-              ok = wait_for_producer_ok(ProducerPid),
-              ok = wait_for_consumer_ok(ConsumerPid),
-
-              ok
-      end).
 
 producer_confirms_test() ->
     with_simple_cluster(
@@ -271,7 +153,7 @@ producer_confirms_test() ->
                   amqp_channel:call(MasterChannel,
                                     #'queue.declare'{auto_delete = false,
                                                      arguments   =
-                                                         [mirror_arg([])]}),
+                                                         mirror_args([])}),
 
               Msgs = 2000,
 
@@ -419,10 +301,14 @@ producer(_Channel, _Queue, TestPid, ConfirmState, 0) ->
     io:format("Done~n"),
     ConfirmState1 = drain_confirms(ConfirmState),
 
+    io:format("~p~n", [gb_trees:keys(ConfirmState1)]),
+
     case ConfirmState1 of
         none -> TestPid ! {self(), ok};
         ok   -> TestPid ! {self(), ok};
-        _    -> TestPid ! {self(), {error, {missing_confirms, ConfirmState1}}}
+        _    -> TestPid ! {self(), {error, {missing_confirms,
+                                            lists:sort(
+                                              gb_trees:keys(ConfirmState1))}}}
     end;
 producer(Channel, Queue, TestPid, ConfirmState, MsgsToSend) ->
     Method = #'basic.publish'{exchange    = <<"">>,
@@ -449,22 +335,26 @@ drain_confirms(none) ->
 drain_confirms(ConfirmState) ->
     case gb_trees:is_empty(ConfirmState) of
         true ->
+            io:format("Returning ok~n"),
             ok;
         false ->
             receive
                 #'basic.ack'{delivery_tag = DeliveryTag,
                              multiple     = IsMulti} ->
-                    io:format("~p:~p~n", [IsMulti, DeliveryTag]),
+                    io:format("Confirm -- Multi: ~p Tag:~p~n",
+                              [IsMulti, DeliveryTag]),
                     ConfirmState1 =
                         case IsMulti of
                             false ->
+                                io:format("Confirming ~p~n", [DeliveryTag]),
                                 gb_trees:delete(DeliveryTag, ConfirmState);
                             true ->
                                 multi_confirm(DeliveryTag, ConfirmState)
                         end,
                     drain_confirms(ConfirmState1)
             after
-                5000 ->
+                15000 ->
+                    io:format("Returning ~p~n", [ConfirmState]),
                     ConfirmState
             end
     end.
@@ -477,6 +367,7 @@ multi_confirm(DeliveryTag, ConfirmState) ->
             {Key, _, ConfirmState1} = gb_trees:take_smallest(ConfirmState),
             case Key =< DeliveryTag of
                 true ->
+                    io:format("Confirming ~p~n", [Key]),
                     multi_confirm(DeliveryTag, ConfirmState1);
                 false ->
                     ConfirmState
@@ -490,6 +381,7 @@ multi_confirm(DeliveryTag, ConfirmState) ->
 with_cluster(ClusterSpec, TestFun) ->
     Cluster = rabbitmq_ha_test_cluster:start(ClusterSpec),
     Result = (catch TestFun(Cluster)),
+    io:format("~n~n~nResult ~p~n~n~n~n", [Result]),
     rabbitmq_ha_test_cluster:stop(Cluster),
     Result.
 
@@ -532,20 +424,21 @@ open_channel(Connection) ->
 close_connection(Connection) ->
     case process_info(Connection) of
         undefined -> ok;
-        _         -> amqp_connection:close(Connection)
+        _         -> (catch amqp_connection:close(Connection))
     end.
 
 close_channel(Channel) ->
     case process_info(Channel) of
         undefined -> ok;
-        _         -> amqp_channel:close(Channel)
+        _         -> (catch amqp_channel:close(Channel))
     end.
 
 %%------------------------------------------------------------------------------
 %% General Utils
 %%------------------------------------------------------------------------------
 
-mirror_arg(Nodes) ->
-    {<<"x-mirror">>, array,
+mirror_args(Nodes) ->
+    [{<<"x-ha-policy">>, longstr, <<"nodes">>},
+     {<<"x-ha-params">>, array,
      [{longstr, list_to_binary(atom_to_list(NodeName))}
-      || #node{name = NodeName} <- Nodes]}.
+      || #node{name = NodeName} <- Nodes]}].
