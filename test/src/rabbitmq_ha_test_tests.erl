@@ -437,6 +437,8 @@ close_channel(Channel) ->
 %% General Utils
 %%------------------------------------------------------------------------------
 
+mirror_args([]) ->
+    [{<<"x-ha-policy">>, longstr, <<"all">>}];
 mirror_args(Nodes) ->
     [{<<"x-ha-policy">>, longstr, <<"nodes">>},
      {<<"x-ha-policy-params">>, array,
