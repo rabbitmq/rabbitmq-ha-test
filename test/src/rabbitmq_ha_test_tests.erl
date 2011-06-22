@@ -1,32 +1,17 @@
-%%   The contents of this file are subject to the Mozilla Public License
-%%   Version 1.1 (the "License"); you may not use this file except in
-%%   compliance with the License. You may obtain a copy of the License at
-%%   http://www.mozilla.org/MPL/
+%% The contents of this file are subject to the Mozilla Public License
+%% Version 1.1 (the "License"); you may not use this file except in
+%% compliance with the License. You may obtain a copy of the License at
+%% http://www.mozilla.org/MPL/
 %%
-%%   Software distributed under the License is distributed on an "AS IS"
-%%   basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See the
-%%   License for the specific language governing rights and limitations
-%%   under the License.
+%% Software distributed under the License is distributed on an "AS IS"
+%% basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See the
+%% License for the specific language governing rights and limitations
+%% under the License.
 %%
-%%   The Original Code is RabbitMQ.
+%% The Original Code is RabbitMQ.
 %%
-%%   The Initial Developers of the Original Code are LShift Ltd,
-%%   Cohesive Financial Technologies LLC, and Rabbit Technologies Ltd.
-%%
-%%   Portions created before 22-Nov-2008 00:00:00 GMT by LShift Ltd,
-%%   Cohesive Financial Technologies LLC, or Rabbit Technologies Ltd
-%%   are Copyright (C) 2007-2008 LShift Ltd, Cohesive Financial
-%%   Technologies LLC, and Rabbit Technologies Ltd.
-%%
-%%   Portions created by LShift Ltd are Copyright (C) 2007-2009 LShift
-%%   Ltd. Portions created by Cohesive Financial Technologies LLC are
-%%   Copyright (C) 2007-2009 Cohesive Financial Technologies
-%%   LLC. Portions created by Rabbit Technologies Ltd are Copyright
-%%   (C) 2007-2009 Rabbit Technologies Ltd.
-%%
-%%   All Rights Reserved.
-%%
-%%   Contributor(s): ______________________________________.
+%% The Initial Developer of the Original Code is VMware, Inc.
+%% Copyright (c) 2007-2010 VMware, Inc.  All rights reserved.
 %%
 -module(rabbitmq_ha_test_tests).
 
@@ -43,9 +28,9 @@
 run() ->
     [ok = apply(Fun, Args) ||
         {Fun, Args} <-
-            [%%{fun send_consume_test/1, [false]},
-             {fun producer_confirms_test/0, []}
-             %%{fun multi_kill_test/0, []}
+            [{fun send_consume_test/1, [false]},
+             {fun producer_confirms_test/0, []},
+             {fun multi_kill_test/0, []}
             ]],
 
     %% Some tests will fail....
@@ -280,9 +265,21 @@ wait_for_producer_ok(ProducerPid) ->
                  {error, lost_contact_with_producer}
          end.
 
+wait_for_producer_start(ProducerPid) ->
+    ok = receive
+             {ProducerPid, started} -> ok
+         after
+              10000 ->
+                 {error, producer_not_started}
+         end.
+
 create_producer(Channel, Queue, TestPid, Confirm, MsgsToSend) ->
-    spawn(?MODULE, start_producer, [Channel, Queue, TestPid,
-                                    Confirm, MsgsToSend]).
+    ProducerPid = spawn(?MODULE, start_producer, [Channel, Queue, TestPid,
+                                                  Confirm, MsgsToSend]),
+    ok = wait_for_producer_start(ProducerPid),
+    ProducerPid.
+
+
 
 start_producer(Channel, Queue, TestPid, Confirm, MsgsToSend) ->
     ConfirmState =
@@ -295,10 +292,10 @@ start_producer(Channel, Queue, TestPid, Confirm, MsgsToSend) ->
             false ->
                 none
     end,
+    TestPid ! {self(), started},
     producer(Channel, Queue, TestPid, ConfirmState, MsgsToSend).
 
 producer(_Channel, _Queue, TestPid, ConfirmState, 0) ->
-    io:format("Done~n"),
     ConfirmState1 = drain_confirms(ConfirmState),
 
     case ConfirmState1 of
@@ -333,18 +330,14 @@ drain_confirms(none) ->
 drain_confirms(ConfirmState) ->
     case gb_trees:is_empty(ConfirmState) of
         true ->
-            io:format("Returning ok~n"),
             ok;
         false ->
             receive
                 #'basic.ack'{delivery_tag = DeliveryTag,
                              multiple     = IsMulti} ->
-                    io:format("Confirm -- Multi: ~p Tag:~p~n",
-                              [IsMulti, DeliveryTag]),
                     ConfirmState1 =
                         case IsMulti of
                             false ->
-                                io:format("Confirming ~p~n", [DeliveryTag]),
                                 gb_trees:delete(DeliveryTag, ConfirmState);
                             true ->
                                 multi_confirm(DeliveryTag, ConfirmState)
@@ -352,7 +345,6 @@ drain_confirms(ConfirmState) ->
                     drain_confirms(ConfirmState1)
             after
                 15000 ->
-                    io:format("Returning ~p~n", [ConfirmState]),
                     ConfirmState
             end
     end.
@@ -365,7 +357,6 @@ multi_confirm(DeliveryTag, ConfirmState) ->
             {Key, _, ConfirmState1} = gb_trees:take_smallest(ConfirmState),
             case Key =< DeliveryTag of
                 true ->
-                    io:format("Confirming ~p~n", [Key]),
                     multi_confirm(DeliveryTag, ConfirmState1);
                 false ->
                     ConfirmState
@@ -379,7 +370,6 @@ multi_confirm(DeliveryTag, ConfirmState) ->
 with_cluster(ClusterSpec, TestFun) ->
     Cluster = rabbitmq_ha_test_cluster:start(ClusterSpec),
     Result = (catch TestFun(Cluster)),
-    io:format("~n~n~nResult ~p~n~n~n~n", [Result]),
     rabbitmq_ha_test_cluster:stop(Cluster),
     Result.
 
