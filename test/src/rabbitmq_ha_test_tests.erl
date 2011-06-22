@@ -439,6 +439,6 @@ close_channel(Channel) ->
 
 mirror_args(Nodes) ->
     [{<<"x-ha-policy">>, longstr, <<"nodes">>},
-     {<<"x-ha-params">>, array,
+     {<<"x-ha-policy-params">>, array,
      [{longstr, list_to_binary(atom_to_list(NodeName))}
       || #node{name = NodeName} <- Nodes]}].
