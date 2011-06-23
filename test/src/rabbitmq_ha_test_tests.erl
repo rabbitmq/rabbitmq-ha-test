@@ -8,10 +8,10 @@
 %% License for the specific language governing rights and limitations
 %% under the License.
 %%
-%% The Original Code is RabbitMQ.
+%% The Original Code is RabbitMQ HA Tests.
 %%
 %% The Initial Developer of the Original Code is VMware, Inc.
-%% Copyright (c) 2007-2010 VMware, Inc.  All rights reserved.
+%% Copyright (c) 2011-2011 VMware, Inc.  All rights reserved.
 %%
 -module(rabbitmq_ha_test_tests).
 
