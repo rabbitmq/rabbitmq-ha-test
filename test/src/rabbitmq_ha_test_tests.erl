@@ -20,27 +20,24 @@
 -include("rabbitmq_ha_test_cluster.hrl").
 -include_lib("amqp_client/include/amqp_client.hrl").
 
+-compile({parse_transform, import_as}).
+-import_as({rabbitmq_ha_test_cluster, [{kill_node/1, kill}]}).
+
 -define(RABBITMQ_SERVER_DIR, "../rabbitmq-server").
 
 -define(SIMPLE_CLUSTER, [{rabbit_misc:makenode(a), 5672},
                          {rabbit_misc:makenode(b), 5673},
                          {rabbit_misc:makenode(c), 5674}]).
-run() ->
-    [ok = apply(Fun, Args) ||
-        {Fun, Args} <-
-            [{fun send_consume_test/1, [false]},
-             {fun producer_confirms_test/0, []},
-             {fun multi_kill_test/0, []}
-            ]],
 
-    %% Some tests will fail....
+test() ->
+    test:test([{?MODULE, [test_send_consume,
+                          test_producer_confirms,
+                          test_multi_kill]}],
+               [report, {name, ?MODULE}]).
 
-    %% no_ack=true can cause message loss
-    %% ok = send_consume_test(true),
+test_send_consume() -> test_send_consume(false).
 
-    ok.
-
-send_consume_test(NoAck) ->
+test_send_consume(NoAck) ->
     with_simple_cluster(
       fun(_Cluster,
           [{Master, _MasterConnection, MasterChannel},
@@ -49,10 +46,10 @@ send_consume_test(NoAck) ->
 
               %% declare the queue on the master, mirrored to the two slaves
               #'queue.declare_ok'{queue = Queue} =
-                  amqp_channel:call(MasterChannel,
-                                    #'queue.declare'{auto_delete = false,
-                                                     arguments   =
-                                                         mirror_args([])}),
+                  amqp_channel:call(
+                    MasterChannel,
+                    #'queue.declare'{auto_delete = false,
+                                     arguments   = mirror_args([])}),
 
               Msgs = 200,
 
@@ -72,12 +69,10 @@ send_consume_test(NoAck) ->
 
               ok = wait_for_producer_ok(ProducerPid),
 
-              io:format("Waited~n"),
-
               ok
       end).
 
-multi_kill_test() ->
+test_multi_kill() ->
     with_cluster_connected(
       ?SIMPLE_CLUSTER ++
           [{rabbit_misc:makenode(d), 5675},
@@ -90,7 +85,7 @@ multi_kill_test() ->
            {Slave3, _Slave3Connection, _Slave3Channel},
            {_Slave4, _Slave4Connection, Slave4Channel},
            {_Producer, _ProducerConnection, ProducerChannel}
-           ]) ->
+          ]) ->
 
               %% declare the queue on the master, mirrored to the two slaves
               #'queue.declare_ok'{queue = Queue} =
@@ -115,7 +110,7 @@ multi_kill_test() ->
                                                  {Slave1, 100},
                                                  {Slave2, 200},
                                                  {Slave3, 300}
-                                                 ]],
+                                                ]],
 
               %% verify that the consumer got all msgs, or die
               ok = wait_for_consumer_ok(ConsumerPid),
@@ -125,8 +120,7 @@ multi_kill_test() ->
               ok
       end).
 
-
-producer_confirms_test() ->
+test_producer_confirms() ->
     with_simple_cluster(
       fun(_Cluster,
           [{Master, _MasterConnection, MasterChannel},
@@ -156,9 +150,6 @@ producer_confirms_test() ->
 
 create_killer(Node, TimeMs) ->
     timer:apply_after(TimeMs, ?MODULE, kill, [Node]).
-
-kill(Node) ->
-    rabbitmq_ha_test_cluster:kill_node(Node).
 
 %%------------------------------------------------------------------------------
 %% Consumer
@@ -216,7 +207,6 @@ consumer(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume) ->
                                    {error, {unexpected_message, MsgNum}})
             end;
         #'basic.cancel'{} ->
-            io:format("Cancelled~n"),
             resubscribe(TestPid, Channel, Queue, NoAck,
                         LowestSeen, MsgsToConsume)
     after
@@ -226,15 +216,11 @@ consumer(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume) ->
     end.
 
 resubscribe(TestPid, Channel, Queue, NoAck, LowestSeen, MsgsToConsume) ->
-    io:format("Sending resubscribe~n"),
-
     amqp_channel:subscribe(Channel,
                            #'basic.consume'{queue    = Queue,
                                             no_local = false,
                                             no_ack   = NoAck},
                            self()),
-
-    io:format("Sent resubscribe~n"),
 
     ok = receive #'basic.consume_ok'{} -> ok
          after 200 -> missing_consume_ok
@@ -269,7 +255,7 @@ wait_for_producer_start(ProducerPid) ->
     ok = receive
              {ProducerPid, started} -> ok
          after
-              10000 ->
+             10000 ->
                  {error, producer_not_started}
          end.
 
@@ -291,7 +277,7 @@ start_producer(Channel, Queue, TestPid, Confirm, MsgsToSend) ->
                 gb_trees:empty();
             false ->
                 none
-    end,
+        end,
     TestPid ! {self(), started},
     producer(Channel, Queue, TestPid, ConfirmState, MsgsToSend).
 
@@ -369,9 +355,10 @@ multi_confirm(DeliveryTag, ConfirmState) ->
 
 with_cluster(ClusterSpec, TestFun) ->
     Cluster = rabbitmq_ha_test_cluster:start(ClusterSpec),
-    Result = (catch TestFun(Cluster)),
-    rabbitmq_ha_test_cluster:stop(Cluster),
-    Result.
+    try TestFun(Cluster)
+    catch Class:Reason -> {Class, Reason}
+    after rabbitmq_ha_test_cluster:stop(Cluster)
+    end.
 
 with_cluster_connected(ClusterSpec, TestFun) ->
     with_cluster(
@@ -383,15 +370,15 @@ with_cluster_connected(ClusterSpec, TestFun) ->
 
               Args = lists:zip3(Nodes, Connections, Channels),
 
-              Result = (catch TestFun(Cluster, Args)),
-
-              Close = fun({_Node, Connection, Channel}) ->
-                              close_channel(Channel),
-                              close_connection(Connection)
-                      end,
-              [Close(Arg) || Arg <- Args],
-              Result
+              try TestFun(Cluster, Args)
+              catch Class:Reason -> {Class, Reason}
+              after [close(Arg) || Arg <- Args]
+              end
       end).
+
+close({_Node, Connection, Channel}) ->
+    close_channel(Channel),
+    close_connection(Connection).
 
 with_simple_cluster(TestFun) ->
     with_cluster_connected(?SIMPLE_CLUSTER, TestFun).
@@ -410,16 +397,12 @@ open_channel(Connection) ->
     Channel.
 
 close_connection(Connection) ->
-    case process_info(Connection) of
-        undefined -> ok;
-        _         -> (catch amqp_connection:close(Connection))
-    end.
+    rabbit_misc:with_exit_handler(
+      rabbit_misc:const(ok), fun () -> amqp_connection:close(Connection) end).
 
 close_channel(Channel) ->
-    case process_info(Channel) of
-        undefined -> ok;
-        _         -> (catch amqp_channel:close(Channel))
-    end.
+    rabbit_misc:with_exit_handler(
+      rabbit_misc:const(ok), fun () -> amqp_channel:close(Channel) end).
 
 %%------------------------------------------------------------------------------
 %% General Utils
@@ -430,5 +413,5 @@ mirror_args([]) ->
 mirror_args(Nodes) ->
     [{<<"x-ha-policy">>, longstr, <<"nodes">>},
      {<<"x-ha-policy-params">>, array,
-     [{longstr, list_to_binary(atom_to_list(NodeName))}
-      || #node{name = NodeName} <- Nodes]}].
+      [{longstr, list_to_binary(atom_to_list(NodeName))}
+       || #node{name = NodeName} <- Nodes]}].

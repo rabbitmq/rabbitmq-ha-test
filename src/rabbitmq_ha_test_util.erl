@@ -23,7 +23,7 @@ rabbitmqctl(RabbitDir, Node, Command, Quiet) ->
     rabbitmqctl(RabbitDir, Node, Command, Quiet, []).
 rabbitmqctl(RabbitDir, Node, Command, Quiet, Args) ->
     QuietFlag = case Quiet of
-                    true -> "-q";
+                    true  -> "-q";
                     false -> ""
                 end,
 

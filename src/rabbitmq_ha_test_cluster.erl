@@ -23,6 +23,7 @@
 -define(PING_WAIT_INTERVAL, 1000).
 -define(PING_MAX_COUNT, 3).
 -define(RABBITMQ_SERVER_DIR, "../rabbitmq-server").
+-define(HEADLESS, true).
 
 %%------------------------------------------------------------------------------
 %% API
@@ -75,9 +76,8 @@ stop_node(#node{name = Name}) ->
 %%------------------------------------------------------------------------------
 
 start_command(Name, Port) ->
-    Headless = true,
-    {Prefix, Suffix} = case Headless of
-                           true -> {"", ""};
+    {Prefix, Suffix} = case ?HEADLESS of
+                           true  -> {"", ""};
                            false -> {"xterm -e \"", "\""}
                        end,
 
@@ -111,20 +111,13 @@ wait_for_node_start(NodeName) ->
     {ok, NodeName}.
 
 wait_for_node_stop(NodeName) ->
-    wait_for_node_state(NodeName, pang, ?PING_MAX_COUNT, node_not_stopped).
+    wait_for_node_stop(NodeName, ?PING_MAX_COUNT, node_not_stopped).
 
-wait_for_node_state(NodeName, _StateMsg, 0, Error) ->
+wait_for_node_stop(NodeName, 0, Error) ->
     {error, {Error, NodeName}};
-wait_for_node_state(NodeName, StateMsg, PingCount, Error) ->
+wait_for_node_stop(NodeName, PingCount, Error) ->
     case net_adm:ping(NodeName) of
-        StateMsg ->
-            {ok, NodeName};
-        _ ->
-            receive
-            after
-                ?PING_WAIT_INTERVAL ->
-                    wait_for_node_state(NodeName, StateMsg,
-                                        PingCount - 1, Error)
-            end
+        pang -> {ok, NodeName};
+        _    -> timer:sleep(?PING_WAIT_INTERVAL),
+                wait_for_node_stop(NodeName, PingCount - 1, Error)
     end.
-
