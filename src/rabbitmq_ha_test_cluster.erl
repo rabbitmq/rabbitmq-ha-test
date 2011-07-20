@@ -85,11 +85,13 @@ start_command(Name0, Port0) ->
                        end,
     Name = atom_to_list(Name0),
     Port = integer_to_list(Port0),
+    MnesiaDir = "/tmp/rabbitmq-test/" ++ Name ++ "-mnesia",
     PluginsDir = "/tmp/rabbitmq-test/no-plugins",
+    os:cmd("rm -rf " ++ MnesiaDir),
+    filelib:ensure_dir(MnesiaDir ++ "/a"),
     filelib:ensure_dir(PluginsDir ++ "/a"),
     Prefix ++
-        "sh -c \"RABBITMQ_MNESIA_BASE=/tmp/rabbitmq-test/" ++ Name ++
-        "-mnesia " ++
+        "sh -c \"RABBITMQ_MNESIA_BASE=" ++ MnesiaDir ++
         " RABBITMQ_LOG_BASE=/tmp/rabbitmq-test/log"
         " RABBITMQ_NODENAME=" ++ Name ++
         " RABBITMQ_NODE_PORT=" ++ Port ++
