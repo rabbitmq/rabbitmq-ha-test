@@ -50,7 +50,11 @@ kill_node(#node{pid = Pid}) ->
 %% Node Interaction
 %%------------------------------------------------------------------------------
 start_node({Name, Port}) ->
-    ErlPort = open_port({spawn, start_command(Name, Port)}, []),
+    os:cmd("rm -rf " ++ mnesia_dir(Name)),
+    filelib:ensure_dir(mnesia_dir(Name) ++ "/a"),
+    filelib:ensure_dir(plugins_dir() ++ "/a"),
+    Cmd = start_command(Name, Port),
+    ErlPort = open_port({spawn, Cmd}, []),
     {ok, Name} = wait_for_node_start(Name),
     #node{name = Name, port = Port, erl_port = ErlPort,
           pid = find_os_pid(Name)}.
@@ -66,8 +70,9 @@ add_node_to_cluster({Name, _Port}, [#node{name = Master} | _]) ->
     rabbitmqctl(Name, "wait " ++ pid_file(Name)),
     ok.
 
-pid_file(Name) ->
-    "/tmp/rabbitmq-test/" ++ atom_to_list(Name) ++ ".pid".
+mnesia_dir(Name) -> "/tmp/rabbitmq-test/" ++ atom_to_list(Name) ++ "-mnesia".
+plugins_dir()    -> "/tmp/rabbitmq-test/no-plugins".
+pid_file(Name)   -> "/tmp/rabbitmq-test/" ++ atom_to_list(Name) ++ ".pid".
 
 stop_node(#node{name = Name}) ->
     rabbitmqctl(Name, "stop"),
@@ -85,18 +90,13 @@ start_command(Name0, Port0) ->
                        end,
     Name = atom_to_list(Name0),
     Port = integer_to_list(Port0),
-    MnesiaDir = "/tmp/rabbitmq-test/" ++ Name ++ "-mnesia",
-    PluginsDir = "/tmp/rabbitmq-test/no-plugins",
-    os:cmd("rm -rf " ++ MnesiaDir),
-    filelib:ensure_dir(MnesiaDir ++ "/a"),
-    filelib:ensure_dir(PluginsDir ++ "/a"),
     Prefix ++
-        "sh -c \"RABBITMQ_MNESIA_BASE=" ++ MnesiaDir ++
+        "sh -c \"RABBITMQ_MNESIA_BASE=" ++ mnesia_dir(Name0) ++
         " RABBITMQ_LOG_BASE=/tmp/rabbitmq-test/log"
         " RABBITMQ_NODENAME=" ++ Name ++
         " RABBITMQ_NODE_PORT=" ++ Port ++
         " RABBITMQ_PID_FILE=" ++ pid_file(Name0) ++
-        " RABBITMQ_PLUGINS_DIR=" ++ PluginsDir ++
+        " RABBITMQ_PLUGINS_DIR=" ++ plugins_dir() ++
         " ../rabbitmq-server/scripts/rabbitmq-server" ++ Suffix.
 
 rabbitmqctl(Name, Command) ->
