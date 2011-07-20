@@ -63,8 +63,11 @@ add_node_to_cluster({Name, _Port}, [#node{name = Master} | _]) ->
     rabbitmqctl(Name, "cluster", false, [atom_to_list(Master),
                                          atom_to_list(Name)]),
     rabbitmqctl(Name, "start_app"),
-    rabbitmqctl(Name, "wait"),
+    rabbitmqctl(Name, "wait " ++ pid_file(Name)),
     ok.
+
+pid_file(Name) ->
+    "/tmp/rabbitmq-test/" ++ atom_to_list(Name) ++ ".pid".
 
 stop_node(#node{name = Name}) ->
     rabbitmqctl(Name, "stop"),
@@ -75,15 +78,24 @@ stop_node(#node{name = Name}) ->
 %% Commands and rabbitmqctl
 %%------------------------------------------------------------------------------
 
-start_command(Name, Port) ->
+start_command(Name0, Port0) ->
     {Prefix, Suffix} = case ?HEADLESS of
-                           true  -> {"", ""};
-                           false -> {"xterm -e \"", "\""}
+                           true  -> {"", " &\""};
+                           false -> {"xterm -e \'", "\"\'"}
                        end,
-
-    Prefix ++ "make RABBITMQ_NODENAME='" ++ atom_to_list(Name) ++
-        "' RABBITMQ_NODE_PORT=" ++ integer_to_list(Port) ++
-        " -C " ++ ?RABBITMQ_SERVER_DIR ++ " cleandb run" ++ Suffix.
+    Name = atom_to_list(Name0),
+    Port = integer_to_list(Port0),
+    PluginsDir = "/tmp/rabbitmq-test/no-plugins",
+    filelib:ensure_dir(PluginsDir ++ "/a"),
+    Prefix ++
+        "sh -c \"RABBITMQ_MNESIA_BASE=/tmp/rabbitmq-test/" ++ Name ++
+        "-mnesia " ++
+        " RABBITMQ_LOG_BASE=/tmp/rabbitmq-test/log"
+        " RABBITMQ_NODENAME=" ++ Name ++
+        " RABBITMQ_NODE_PORT=" ++ Port ++
+        " RABBITMQ_PID_FILE=" ++ pid_file(Name0) ++
+        " RABBITMQ_PLUGINS_DIR=" ++ PluginsDir ++
+        " ../rabbitmq-server/scripts/rabbitmq-server" ++ Suffix.
 
 rabbitmqctl(Name, Command) ->
     rabbitmq_ha_test_util:rabbitmqctl(?RABBITMQ_SERVER_DIR, Name, Command).
@@ -107,7 +119,7 @@ find_os_pid(Node) ->
     proplists:get_value(pid, Term).
 
 wait_for_node_start(NodeName) ->
-    rabbitmqctl(NodeName, "wait"),
+    rabbitmqctl(NodeName, "wait " ++ pid_file(NodeName)),
     {ok, NodeName}.
 
 wait_for_node_stop(NodeName) ->
