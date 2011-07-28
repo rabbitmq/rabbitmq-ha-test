@@ -23,7 +23,6 @@
 -define(PING_WAIT_INTERVAL, 1000).
 -define(PING_MAX_COUNT, 3).
 -define(RABBITMQ_SERVER_DIR, "../rabbitmq-server").
--define(TMP_DIR,             "/tmp/rabbitmq-test").
 -define(HEADLESS, true).
 
 %%------------------------------------------------------------------------------
@@ -51,9 +50,7 @@ kill_node(#node{pid = Pid}) ->
 %% Node Interaction
 %%------------------------------------------------------------------------------
 start_node({Name, Port}) ->
-    os:cmd("rm -rf " ++ mnesia_dir(Name)),
-    filelib:ensure_dir(mnesia_dir(Name) ++ "/a"),
-    filelib:ensure_dir(plugins_dir() ++ "/a"),
+    maybe_remove_pid_file(Name),
     ErlPort = open_port({spawn, start_command(Name, Port)}, []),
     {ok, Name} = wait_for_node_start(Name),
     #node{name = Name, port = Port, erl_port = ErlPort,
@@ -70,11 +67,6 @@ add_node_to_cluster({Name, _Port}, [#node{name = Master} | _]) ->
     rabbitmqctl(Name, "wait " ++ pid_file(Name)),
     ok.
 
-mnesia_dir(Name) -> ?TMP_DIR ++ "/" ++ atom_to_list(Name) ++ "-mnesia".
-pid_file(Name)   -> ?TMP_DIR ++ "/" ++ atom_to_list(Name) ++ ".pid".
-plugins_dir()    -> ?TMP_DIR ++ "/no-plugins".
-log_dir()        -> ?TMP_DIR ++ "/log".
-
 stop_node(#node{name = Name}) ->
     rabbitmqctl(Name, "stop"),
     {ok, Name} = wait_for_node_stop(Name),
@@ -84,21 +76,15 @@ stop_node(#node{name = Name}) ->
 %% Commands and rabbitmqctl
 %%------------------------------------------------------------------------------
 
-start_command(Name0, Port0) ->
+start_command(Name, Port) ->
     {Prefix, Suffix} = case ?HEADLESS of
-                           true  -> {"", " &\""};
-                           false -> {"xterm -e \'", "\"\'"}
+                           true  -> {"", ""};
+                           false -> {"xterm -e \"", "\""}
                        end,
-    Name = atom_to_list(Name0),
-    Port = integer_to_list(Port0),
-    Prefix ++
-        "sh -c \"RABBITMQ_MNESIA_BASE=" ++ mnesia_dir(Name0) ++
-        " RABBITMQ_LOG_BASE=" ++ log_dir() ++
-        " RABBITMQ_NODENAME=" ++ Name ++
-        " RABBITMQ_NODE_PORT=" ++ Port ++
-        " RABBITMQ_PID_FILE=" ++ pid_file(Name0) ++
-        " RABBITMQ_PLUGINS_DIR=" ++ plugins_dir() ++
-        " " ++ ?RABBITMQ_SERVER_DIR ++ "/scripts/rabbitmq-server" ++ Suffix.
+    Prefix ++ "make RABBITMQ_NODENAME='" ++ atom_to_list(Name) ++
+        "' RABBITMQ_NODE_PORT=" ++ integer_to_list(Port) ++
+        " RABBITMQ_PID_FILE='" ++ pid_file(Name) ++
+        "' -C " ++ ?RABBITMQ_SERVER_DIR ++ " cleandb run" ++ Suffix.
 
 rabbitmqctl(Name, Command) ->
     rabbitmq_ha_test_util:rabbitmqctl(?RABBITMQ_SERVER_DIR, Name, Command).
@@ -136,3 +122,17 @@ wait_for_node_stop(NodeName, PingCount, Error) ->
         _    -> timer:sleep(?PING_WAIT_INTERVAL),
                 wait_for_node_stop(NodeName, PingCount - 1, Error)
     end.
+
+pid_file(NodeName) ->
+    case os:getenv("TMPDIR") of
+        false -> "/tmp";
+        T     -> T
+    end ++ "/rabbitmq-ha-test/" ++ atom_to_list(NodeName) ++ ".pid".
+
+maybe_remove_pid_file(NodeName) ->
+    File = pid_file(NodeName),
+    case filelib:is_file(File) of
+        true  -> ok = file:delete(File);
+        false -> ok
+    end.
+
