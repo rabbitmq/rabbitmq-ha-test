@@ -83,8 +83,9 @@ start_command(Name, Port) ->
                        end,
     Prefix ++ "make RABBITMQ_NODENAME='" ++ atom_to_list(Name) ++
         "' RABBITMQ_NODE_PORT=" ++ integer_to_list(Port) ++
-        " RABBITMQ_PID_FILE='" ++ pid_file(Name) ++
-        "' -C " ++ ?RABBITMQ_SERVER_DIR ++ " cleandb run" ++ Suffix.
+        " RABBITMQ_PID_FILE='" ++ pid_file(Name) ++ "'"
+        " RABBITMQ_SERVER_START_ARGS='-noinput'" ++
+        " -C " ++ ?RABBITMQ_SERVER_DIR ++ " cleandb run" ++ Suffix.
 
 rabbitmqctl(Name, Command) ->
     rabbitmq_ha_test_util:rabbitmqctl(?RABBITMQ_SERVER_DIR, Name, Command).
