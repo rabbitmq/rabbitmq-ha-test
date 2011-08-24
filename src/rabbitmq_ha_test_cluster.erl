@@ -50,6 +50,7 @@ kill_node(#node{pid = Pid}) ->
 %% Node Interaction
 %%------------------------------------------------------------------------------
 start_node({Name, Port}) ->
+    maybe_remove_pid_file(Name),
     ErlPort = open_port({spawn, start_command(Name, Port)}, []),
     {ok, Name} = wait_for_node_start(Name),
     #node{name = Name, port = Port, erl_port = ErlPort,
@@ -63,7 +64,7 @@ add_node_to_cluster({Name, _Port}, [#node{name = Master} | _]) ->
     rabbitmqctl(Name, "cluster", false, [atom_to_list(Master),
                                          atom_to_list(Name)]),
     rabbitmqctl(Name, "start_app"),
-    rabbitmqctl(Name, "wait"),
+    rabbitmqctl(Name, "wait " ++ pid_file(Name)),
     ok.
 
 stop_node(#node{name = Name}) ->
@@ -80,9 +81,10 @@ start_command(Name, Port) ->
                            true  -> {"", ""};
                            false -> {"xterm -e \"", "\""}
                        end,
-
     Prefix ++ "make RABBITMQ_NODENAME='" ++ atom_to_list(Name) ++
         "' RABBITMQ_NODE_PORT=" ++ integer_to_list(Port) ++
+        " RABBITMQ_PID_FILE='" ++ pid_file(Name) ++ "'"
+        " RABBITMQ_SERVER_START_ARGS='-noinput'" ++
         " -C " ++ ?RABBITMQ_SERVER_DIR ++ " cleandb run" ++ Suffix.
 
 rabbitmqctl(Name, Command) ->
@@ -107,7 +109,7 @@ find_os_pid(Node) ->
     proplists:get_value(pid, Term).
 
 wait_for_node_start(NodeName) ->
-    rabbitmqctl(NodeName, "wait"),
+    rabbitmqctl(NodeName, "wait " ++ pid_file(NodeName)),
     {ok, NodeName}.
 
 wait_for_node_stop(NodeName) ->
@@ -121,3 +123,17 @@ wait_for_node_stop(NodeName, PingCount, Error) ->
         _    -> timer:sleep(?PING_WAIT_INTERVAL),
                 wait_for_node_stop(NodeName, PingCount - 1, Error)
     end.
+
+pid_file(NodeName) ->
+    case os:getenv("TMPDIR") of
+        false -> "/tmp";
+        T     -> T
+    end ++ "/rabbitmq-ha-test/" ++ atom_to_list(NodeName) ++ ".pid".
+
+maybe_remove_pid_file(NodeName) ->
+    File = pid_file(NodeName),
+    case filelib:is_file(File) of
+        true  -> ok = file:delete(File);
+        false -> ok
+    end.
+
