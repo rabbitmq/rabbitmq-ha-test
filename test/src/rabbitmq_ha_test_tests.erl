@@ -356,7 +356,6 @@ multi_confirm(DeliveryTag, ConfirmState) ->
 with_cluster(ClusterSpec, TestFun) ->
     Cluster = rabbitmq_ha_test_cluster:start(ClusterSpec),
     try TestFun(Cluster)
-    catch Class:Reason -> {Class, Reason}
     after rabbitmq_ha_test_cluster:stop(Cluster)
     end.
 
@@ -371,7 +370,6 @@ with_cluster_connected(ClusterSpec, TestFun) ->
               Args = lists:zip3(Nodes, Connections, Channels),
 
               try TestFun(Cluster, Args)
-              catch Class:Reason -> {Class, Reason}
               after [close(Arg) || Arg <- Args]
               end
       end).
