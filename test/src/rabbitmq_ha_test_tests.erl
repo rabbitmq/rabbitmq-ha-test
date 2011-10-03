@@ -44,12 +44,17 @@ test_send_consume(NoAck) ->
            {_Producer, _ProducerConnection, ProducerChannel},
            {_Slave, _SlaveConnection, SlaveChannel}]) ->
 
+              %% Test the nodes policy this time.
+              Nodes = [rabbit_misc:makenode(a),
+                       rabbit_misc:makenode(b),
+                       rabbit_misc:makenode(c)],
+
               %% declare the queue on the master, mirrored to the two slaves
               #'queue.declare_ok'{queue = Queue} =
                   amqp_channel:call(
                     MasterChannel,
                     #'queue.declare'{auto_delete = false,
-                                     arguments   = mirror_args([])}),
+                                     arguments   = mirror_args(Nodes)}),
 
               Msgs = 200,
 
@@ -411,5 +416,4 @@ mirror_args([]) ->
 mirror_args(Nodes) ->
     [{<<"x-ha-policy">>, longstr, <<"nodes">>},
      {<<"x-ha-policy-params">>, array,
-      [{longstr, list_to_binary(atom_to_list(NodeName))}
-       || #node{name = NodeName} <- Nodes]}].
+      [{longstr, list_to_binary(atom_to_list(N))} || N <- Nodes]}].
