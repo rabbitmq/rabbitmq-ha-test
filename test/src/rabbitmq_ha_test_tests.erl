@@ -44,12 +44,17 @@ test_send_consume(NoAck) ->
            {_Producer, _ProducerConnection, ProducerChannel},
            {_Slave, _SlaveConnection, SlaveChannel}]) ->
 
+              %% Test the nodes policy this time.
+              Nodes = [rabbit_misc:makenode(a),
+                       rabbit_misc:makenode(b),
+                       rabbit_misc:makenode(c)],
+
               %% declare the queue on the master, mirrored to the two slaves
               #'queue.declare_ok'{queue = Queue} =
                   amqp_channel:call(
                     MasterChannel,
                     #'queue.declare'{auto_delete = false,
-                                     arguments   = mirror_args([])}),
+                                     arguments   = mirror_args(Nodes)}),
 
               Msgs = 200,
 
@@ -356,7 +361,6 @@ multi_confirm(DeliveryTag, ConfirmState) ->
 with_cluster(ClusterSpec, TestFun) ->
     Cluster = rabbitmq_ha_test_cluster:start(ClusterSpec),
     try TestFun(Cluster)
-    catch Class:Reason -> {Class, Reason}
     after rabbitmq_ha_test_cluster:stop(Cluster)
     end.
 
@@ -371,7 +375,6 @@ with_cluster_connected(ClusterSpec, TestFun) ->
               Args = lists:zip3(Nodes, Connections, Channels),
 
               try TestFun(Cluster, Args)
-              catch Class:Reason -> {Class, Reason}
               after [close(Arg) || Arg <- Args]
               end
       end).
@@ -413,5 +416,4 @@ mirror_args([]) ->
 mirror_args(Nodes) ->
     [{<<"x-ha-policy">>, longstr, <<"nodes">>},
      {<<"x-ha-policy-params">>, array,
-      [{longstr, list_to_binary(atom_to_list(NodeName))}
-       || #node{name = NodeName} <- Nodes]}].
+      [{longstr, list_to_binary(atom_to_list(N))} || N <- Nodes]}].
