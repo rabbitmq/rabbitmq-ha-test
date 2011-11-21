@@ -21,7 +21,11 @@
 -include_lib("amqp_client/include/amqp_client.hrl").
 
 -compile({parse_transform, import_as}).
--import_as({rabbitmq_ha_test_cluster, [{kill_node/1, kill}]}).
+-import_as({rabbitmq_ha_test_cluster, [{kill_node/1,  kill},
+                                       {stop_node/1,  stop},
+                                       {start_node/1, start},
+                                       {add_node_to_cluster/2,
+                                            add_to_cluster}]}).
 
 -define(RABBITMQ_SERVER_DIR, "../rabbitmq-server").
 
@@ -32,7 +36,8 @@
 test() ->
     test:test([{?MODULE, [test_send_consume,
                           test_producer_confirms,
-                          test_multi_kill]}],
+                          test_multi_kill,
+                          test_restarting_master]}],
                [report, {name, ?MODULE}]).
 
 test_send_consume() -> test_send_consume(false).
@@ -149,6 +154,49 @@ test_producer_confirms() ->
               create_killer(Master, 50),
 
               ok = wait_for_producer_ok(ProducerPid),
+
+              ok
+      end).
+
+test_restarting_master() ->
+    with_simple_cluster(
+      fun(_Cluster,
+          [{Master,   _MasterConnection,   MasterChannel},
+           {Producer, _ProducerConnection, _ProducerChannel},
+           {Slave,    _SlaveConnection,    _SlaveChannel}]) ->
+
+              Nodes = [rabbit_misc:makenode(a),
+                       rabbit_misc:makenode(b),
+                       rabbit_misc:makenode(c)],
+
+              Queue = <<"ha-test-restarting-master">>,
+
+              #'queue.declare_ok'{} =
+                  amqp_channel:call(
+                    MasterChannel,
+                    #'queue.declare'{queue       = Queue,
+                                     auto_delete = false,
+                                     arguments   = mirror_args(Nodes)}),
+
+              stop(Master),
+              start({Master#node.name, 5672}),
+              add_to_cluster(Master#node.name, rabbit_misc:makenode(b)),
+              stop(Producer),
+              stop(Slave),
+
+              MasterConnection1 = open_connection(#node{port = 5672}),
+              MasterChannel1 = open_channel( MasterConnection1 ),
+
+              try
+                  amqp_channel:call( MasterChannel1,
+                                     #'queue.declare'{queue = Queue}) of
+                  #'queue.declare_ok'{} -> throw({exception_expected,
+                                                  ?PRECONDITION_FAILED})
+              catch
+                  exit:{{shutdown, {server_initiated_close,
+                                    ?PRECONDITION_FAILED, _Bin}}, _Rest} ->
+                      ok
+              end,
 
               ok
       end).

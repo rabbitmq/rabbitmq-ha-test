@@ -15,7 +15,7 @@
 %%
 -module(rabbitmq_ha_test_cluster).
 
--export([start/1, stop/1]).
+-export([start/1, stop/1, stop_node/1, start_node/1, add_node_to_cluster/2]).
 -export([kill_node/1]).
 
 -include("rabbitmq_ha_test_cluster.hrl").
@@ -59,6 +59,8 @@ start_node({Name, Port}) ->
 add_node_to_cluster(_Spec, []) ->
     ok;
 add_node_to_cluster({Name, _Port}, [#node{name = Master} | _]) ->
+    add_node_to_cluster(Name, Master);
+add_node_to_cluster(Name, Master) ->
     rabbitmqctl(Name, "stop_app"),
     rabbitmqctl(Name, "reset"),
     rabbitmqctl(Name, "cluster", false, [atom_to_list(Master),
