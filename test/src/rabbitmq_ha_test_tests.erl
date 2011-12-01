@@ -158,6 +158,8 @@ test_producer_confirms() ->
               ok
       end).
 
+%% the queue state must be preserved if a master rejoins the cluster and
+%% becomes the only node
 test_restarting_master() ->
     with_simple_cluster(
       fun(_Cluster,
@@ -178,15 +180,19 @@ test_restarting_master() ->
                                      auto_delete = false,
                                      arguments   = mirror_args(Nodes)}),
 
+              %% restart master
               stop(Master),
               start({Master#node.name, 5672}),
               add_to_cluster(Master#node.name, rabbit_misc:makenode(b)),
+
+              %% retire other members of the cluster
               stop(Producer),
               stop(Slave),
 
               MasterConnection1 = open_connection(#node{port = 5672}),
               MasterChannel1 = open_channel( MasterConnection1 ),
 
+              %% the master must refuse redeclaration with different parameters
               try
                   amqp_channel:call( MasterChannel1,
                                      #'queue.declare'{queue = Queue}) of
@@ -194,8 +200,7 @@ test_restarting_master() ->
                                                   ?PRECONDITION_FAILED})
               catch
                   exit:{{shutdown, {server_initiated_close,
-                                    ?PRECONDITION_FAILED, _Bin}}, _Rest} ->
-                      ok
+                                    ?PRECONDITION_FAILED, _Bin}}, _Rest} -> ok
               end,
 
               ok
