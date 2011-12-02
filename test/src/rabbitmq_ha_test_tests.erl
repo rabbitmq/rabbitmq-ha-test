@@ -141,6 +141,7 @@ test_producer_confirms() ->
               #'queue.declare_ok'{queue = Queue} =
                   amqp_channel:call(MasterChannel,
                                     #'queue.declare'{auto_delete = false,
+                                                     durable     = true,
                                                      arguments   =
                                                          mirror_args([])}),
 
@@ -358,7 +359,8 @@ producer(Channel, Queue, TestPid, ConfirmState, MsgsToSend) ->
     ConfirmState1 = maybe_record_confirm(ConfirmState, Channel, MsgsToSend),
 
     amqp_channel:call(Channel, Method,
-                      #amqp_msg{payload = list_to_binary(
+                      #amqp_msg{props = #'P_basic'{delivery_mode = 2},
+                                payload = list_to_binary(
                                             integer_to_list(MsgsToSend))}),
 
     producer(Channel, Queue, TestPid, ConfirmState1, MsgsToSend - 1).
