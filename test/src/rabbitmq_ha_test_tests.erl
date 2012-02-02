@@ -29,9 +29,9 @@
 
 -define(RABBITMQ_SERVER_DIR, "../rabbitmq-server").
 
--define(SIMPLE_CLUSTER, [{rabbit_misc:makenode(a), 5672},
-                         {rabbit_misc:makenode(b), 5673},
-                         {rabbit_misc:makenode(c), 5674}]).
+-define(SIMPLE_CLUSTER, [{rabbit_nodes:make(a), 5672},
+                         {rabbit_nodes:make(b), 5673},
+                         {rabbit_nodes:make(c), 5674}]).
 
 test() ->
     test:test([{?MODULE, [test_send_consume,
@@ -50,9 +50,9 @@ test_send_consume(NoAck) ->
            {_Slave, _SlaveConnection, SlaveChannel}]) ->
 
               %% Test the nodes policy this time.
-              Nodes = [rabbit_misc:makenode(a),
-                       rabbit_misc:makenode(b),
-                       rabbit_misc:makenode(c)],
+              Nodes = [rabbit_nodes:make(a),
+                       rabbit_nodes:make(b),
+                       rabbit_nodes:make(c)],
 
               %% declare the queue on the master, mirrored to the two slaves
               #'queue.declare_ok'{queue = Queue} =
@@ -85,9 +85,9 @@ test_send_consume(NoAck) ->
 test_multi_kill() ->
     with_cluster_connected(
       ?SIMPLE_CLUSTER ++
-          [{rabbit_misc:makenode(d), 5675},
-           {rabbit_misc:makenode(e), 5676},
-           {rabbit_misc:makenode(f), 5677}],
+          [{rabbit_nodes:make(d), 5675},
+           {rabbit_nodes:make(e), 5676},
+           {rabbit_nodes:make(f), 5677}],
       fun(_Cluster,
           [{Master, _MasterConnection, MasterChannel},
            {Slave1, _Slave1Connection, _Slave1Channel},
@@ -168,9 +168,9 @@ test_restarting_master() ->
            {Producer, _ProducerConnection, _ProducerChannel},
            {Slave,    _SlaveConnection,    _SlaveChannel}]) ->
 
-              Nodes = [rabbit_misc:makenode(a),
-                       rabbit_misc:makenode(b),
-                       rabbit_misc:makenode(c)],
+              Nodes = [rabbit_nodes:make(a),
+                       rabbit_nodes:make(b),
+                       rabbit_nodes:make(c)],
 
               Queue = <<"ha-test-restarting-master">>,
 
@@ -184,7 +184,7 @@ test_restarting_master() ->
               %% restart master
               stop(Master),
               start({Master#node.name, 5672}),
-              add_to_cluster(Master#node.name, rabbit_misc:makenode(b)),
+              add_to_cluster(Master#node.name, rabbit_nodes:make(b)),
 
               %% retire other members of the cluster
               stop(Producer),
