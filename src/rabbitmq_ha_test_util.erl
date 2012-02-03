@@ -11,7 +11,7 @@
 %% The Original Code is RabbitMQ HA Tests.
 %%
 %% The Initial Developer of the Original Code is VMware, Inc.
-%% Copyright (c) 2011-2011 VMware, Inc.  All rights reserved.
+%% Copyright (c) 2011-2012 VMware, Inc.  All rights reserved.
 %%
 -module(rabbitmq_ha_test_util).
 
