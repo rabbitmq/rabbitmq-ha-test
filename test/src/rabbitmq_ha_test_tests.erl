@@ -37,7 +37,8 @@ test() ->
     test:test([{?MODULE, [test_send_consume,
                           test_producer_confirms,
                           test_multi_kill,
-                          test_restarting_master]}],
+                          test_restarting_master,
+                          test_dlx]}],
                [report, {name, ?MODULE}]).
 
 test_send_consume() -> test_send_consume(false).
@@ -203,6 +204,56 @@ test_restarting_master() ->
                   exit:{{shutdown, {server_initiated_close,
                                     ?PRECONDITION_FAILED, _Bin}}, _Rest} -> ok
               end,
+
+              ok
+      end).
+
+test_dlx() ->
+    with_simple_cluster(
+      fun(_Cluster,
+          [{Master,   _MasterConnection,   MasterChannel},
+           {Producer, _ProducerConnection, ProducerChannel},
+           {Slave,    _SlaveConnection,    SlaveChannel}]) ->
+
+              Nodes = [rabbit_nodes:make(a),
+                       rabbit_nodes:make(b),
+                       rabbit_nodes:make(c)],
+
+              Queue1 = <<"ha-test-dlx-queue1">>,
+              Queue2 = <<"ha-test-dlx-queue2">>,
+              DLX    = <<"ha-test-dlx-exchange">>,
+
+              #'exchange.declare_ok'{} =
+                amqp_channel:call(MasterChannel,
+                                  #'exchange.declare'{exchange = DLX}),
+
+              #'queue.declare_ok'{} =
+                  amqp_channel:call(
+                    MasterChannel,
+                    #'queue.declare'{queue = Queue2}),
+
+              #'queue.bind_ok'{} =
+                  amqp_channel:call(MasterChannel,
+                                    #'queue.bind'{queue       = Queue2,
+                                                  exchange    = DLX,
+                                                  routing_key = Queue1}),
+
+              #'queue.declare_ok'{} =
+                  amqp_channel:call(
+                    MasterChannel,
+                    #'queue.declare'{queue       = Queue1,
+                                     auto_delete = false,
+                                     arguments   = [ {<<"x-dead-letter-exchange">>,
+                                                        longstr, DLX},
+                                                     {<<"x-message-ttl">>, long, 1}
+                                                    | mirror_args([])]}),
+
+              ProducerPid = create_producer(MasterChannel,
+                                            Queue1, self(), true, 1),
+              ok = wait_for_producer_ok(ProducerPid),
+
+              Get = #'basic.get'{queue = Queue2, no_ack = false},
+              {#'basic.get_ok'{}, _Cont} = amqp_channel:call(SlaveChannel, Get),
 
               ok
       end).
