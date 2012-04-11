@@ -211,13 +211,9 @@ test_restarting_master() ->
 test_dlx() ->
     with_simple_cluster(
       fun(_Cluster,
-          [{Master,   _MasterConnection,   MasterChannel},
-           {Producer, _ProducerConnection, ProducerChannel},
-           {Slave,    _SlaveConnection,    SlaveChannel}]) ->
-
-              Nodes = [rabbit_nodes:make(a),
-                       rabbit_nodes:make(b),
-                       rabbit_nodes:make(c)],
+          [{_Master,   _MasterConnection,   MasterChannel},
+           {_Producer, _ProducerConnection, _ProducerChannel},
+           {_Slave,    _SlaveConnection,    SlaveChannel}]) ->
 
               Queue1 = <<"ha-test-dlx-queue1">>,
               Queue2 = <<"ha-test-dlx-queue2">>,
@@ -252,8 +248,11 @@ test_dlx() ->
                                             Queue1, self(), true, 1),
               ok = wait_for_producer_ok(ProducerPid),
 
-              Get = #'basic.get'{queue = Queue2, no_ack = false},
-              {#'basic.get_ok'{}, _Cont} = amqp_channel:call(SlaveChannel, Get),
+              Get1 = #'basic.get'{queue = Queue1},
+              #'basic.get_empty'{} = amqp_channel:call(SlaveChannel, Get1),
+
+              Get2 = #'basic.get'{queue = Queue2},
+              {#'basic.get_ok'{}, _} = amqp_channel:call(SlaveChannel, Get2),
 
               ok
       end).
